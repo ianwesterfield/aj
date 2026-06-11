@@ -5,12 +5,12 @@
 # Core FastAPI
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
-python-multipart==0.0.26
+python-multipart==0.0.27
 
 # ML & NLP
 numpy<2
 transformers>=4.40.0
-torch>=2.2.0
+torch>=2.12.0
 torchvision>=0.17.0
 torchaudio>=2.2.0
 
