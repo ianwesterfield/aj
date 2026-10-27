@@ -1,0 +1,20 @@
+# Accelerate launch config for 4x B200 DDP training.
+# Usage:
+#   accelerate launch --config_file configs/accelerate_4gpu.yaml scripts/train_llama33_70b.py \
+#     --config configs/llama33_70b_b200x4.yaml
+compute_environment: LOCAL_MACHINE
+distributed_type: MULTI_GPU
+num_machines: 1
+num_processes: 4
+machine_rank: 0
+main_training_function: main
+mixed_precision: bf16
+gpu_ids: all
+rdzv_backend: static
+same_network: true
+tpu_use_cluster: false
+tpu_use_sudo: false
+use_cpu: false
+# No DeepSpeed / FSDP — standard PyTorch DDP. At 191 GB per GPU we don't need
+# weight or optimizer-state sharding; each rank owns a full model replica and
+# gradients are all-reduced via NVLink 5 (~950 GB/s P2P) each step.

@@ -1,0 +1,14 @@
+{
+  "id2label": {
+    "0": "casual",
+    "1": "save",
+    "2": "recall",
+    "3": "task"
+  },
+  "label2id": {
+    "casual": 0,
+    "save": 1,
+    "recall": 2,
+    "task": 3
+  }
+}

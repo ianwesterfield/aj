@@ -1,0 +1,25 @@
+# Requirements for AJ Model Merge & Quantization
+# Model: aj-deepseek-r1-32b-Q5_K_M (~22GB, RTX 4090 optimized)
+# Base: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+# Adapter: AJ-DeepSeekR1Qwen32B-v2.1.0-lora
+
+# Core ML
+torch>=2.2.0
+transformers>=4.40.0
+accelerate>=0.27.0
+
+# LoRA merging
+peft>=0.10.0
+
+# Config parsing
+pyyaml>=6.0
+
+# Progress bars
+tqdm>=4.66.0
+
+# HuggingFace model downloads
+huggingface-hub>=0.21.0
+
+# Note: llama.cpp must be built separately
+# git clone https://github.com/ggerganov/llama.cpp
+# cd llama.cpp && make GGML_CUDA=1

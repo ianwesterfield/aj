@@ -1,0 +1,264 @@
+networks:
+  webtools_network:
+    external: true
+
+secrets:
+  huggingface_pat:
+    file: ./secrets/huggingface_pat.txt
+  funnel_local_agent_host:
+    file: ./secrets/funnel_local_agent_host.txt
+  funnel_gossip_seed_host:
+    file: ./secrets/funnel_gossip_seed_host.txt
+
+services:
+  # -------------------------------------------------
+  # Local LLM: llama.cpp llama-server
+  # -------------------------------------------------
+  # llama-server runs OUTSIDE docker, directly on the WSL2 host, so it can
+  # expose the RTX 4090 via CUDA without the container GPU-passthrough hit.
+  # Managed by scripts/start-llama-server.sh (tmux) or a WSL systemd unit.
+  # Default endpoint: http://localhost:8081  (OpenAI-compatible)
+  #
+  # All containers below reach it via localhost since they use network_mode: host.
+  # -------------------------------------------------
+
+  # -------------------------------------------------
+  # (DEPRECATED) Ollama local fallback — kept for reference only.
+  # llama-server replaced this as the primary inference runtime (see above).
+  # Uncomment to re-enable if you need Ollama-specific features.
+  # -------------------------------------------------
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama
+  #   network_mode: host
+  #   environment:
+  #     - OLLAMA_HOST=0.0.0.0
+  #     - OLLAMA_KEEP_ALIVE=-1
+  #     - OLLAMA_NUM_PARALLEL=1
+  #     - OLLAMA_MAX_LOADED_MODELS=1
+  #   volumes:
+  #     - /mnt/c/docker-data/ollama/.ollama:/root/.ollama
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   shm_size: 2g
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+  #     interval: 60s
+  #     timeout: 30s
+  #     retries: 3
+  #     start_period: 30s
+
+  # -------------------------------------------------
+  # Qdrant
+  # -------------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    network_mode: host
+    environment:
+      - QDRANT__LOG_LEVEL=DEBUG
+      # Flush WAL more frequently to reduce corruption risk on shutdown
+      - QDRANT__STORAGE__OPTIMIZERS__FLUSH_INTERVAL_SEC=1
+    volumes:
+      - /mnt/c/docker-data/qdrant/storage:/qdrant/storage
+    restart: unless-stopped
+    # Give Qdrant time to flush WAL and close cleanly
+    stop_grace_period: 30s
+
+  # -------------------------------------------------
+  # Memory API (Memory + Agent Core)
+  # -------------------------------------------------
+  memory_api:
+    build:
+      context: ./layers
+      dockerfile: memory/Dockerfile
+      args:
+        BASE_REGISTRY: ${BASE_REGISTRY:-ianwesterfield}
+    container_name: memory_api
+    network_mode: host
+    environment:
+      - QDRANT_HOST=localhost
+      - QDRANT_PORT=6333
+      # v2 collection: 1024-dim Qwen3-Embedding vectors (old 768-dim data incompatible)
+      - INDEX_NAME=user_memory_v2
+      - EMBED_DIM=1024
+      # Embeddings via the dedicated llama-server embedding instance on the WSL host
+      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-http://localhost:8082}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-qwen3-embedding-0.6b}
+      # LLM inference (summarization) goes to local llama.cpp llama-server on the WSL host.
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://localhost:8081}
+      - LLM_MODEL=${LLM_MODEL:-bonsai-2-27b}
+      - FILTERS_PATH=/filters
+    volumes:
+      - ./filters:/filters:ro
+    depends_on:
+      - qdrant
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # -------------------------------------------------
+  # Extractor API (Media -> Text)
+  # -------------------------------------------------
+  extractor_api:
+    build:
+      context: ./layers/extractor
+      dockerfile: Dockerfile
+      args:
+        BASE_REGISTRY: ${BASE_REGISTRY:-ianwesterfield}
+    container_name: extractor_api
+    network_mode: host
+    environment:
+      - WHISPER_MODEL=large-v3
+      # Vision via the shared llama-server VLM (Bonsai mmproj) on the WSL host
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://localhost:8081}
+      - LLM_MODEL=${LLM_MODEL:-bonsai-2-27b}
+      - HF_HOME=/models
+      - HF_TOKEN_FILE=/run/secrets/huggingface_pat
+    secrets:
+      - huggingface_pat
+    volumes:
+      - /mnt/c/docker-data/models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # -------------------------------------------------
+  # Orchestrator API (.NET) - Agentic Reasoning + Execution Engine
+  # Includes embedded FunnelCloud Agent for localhost bootstrap
+  # -------------------------------------------------
+  orchestrator_api:
+    build:
+      context: ./layers/orchestrator-dotnet
+      dockerfile: Dockerfile
+    container_name: orchestrator_api
+    network_mode: host
+    environment:
+      # .NET Core configuration
+      - ASPNETCORE_URLS=http://+:8004
+      - ASPNETCORE_ENVIRONMENT=Production
+      # LLM inference: local llama.cpp llama-server on the WSL host.
+      # The app also reads LLM_BASE_URL / LLM_MODEL directly from env; the
+      # Ollama__* keys below are for legacy appsettings binding compatibility.
+      - Llm__Url=${LLM_BASE_URL:-http://localhost:8081}
+      - Llm__Model=${LLM_MODEL:-bonsai-2-27b}
+      - Ollama__Url=${LLM_BASE_URL:-http://localhost:8081}
+      - Ollama__Model=${LLM_MODEL:-bonsai-2-27b}
+      - LLM_BASE_URL=${LLM_BASE_URL:-http://localhost:8081}
+      - LLM_MODEL=${LLM_MODEL:-bonsai-2-27b}
+      - OLLAMA_BASE_URL=${LLM_BASE_URL:-http://localhost:8081}
+      - OLLAMA_MODEL=${LLM_MODEL:-bonsai-2-27b}
+      # FunnelCloud agent discovery (use WSL gateway IP to reach Windows host)
+      - FunnelCloud__Url=http://172.25.224.1:41421
+      - FUNNEL_CLIENT_CERT_PATH=/run/funnelcloud/orchestrator.pfx
+      - FUNNEL_CLIENT_CERT_PASSWORD_FILE=/run/funnelcloud/pfx-password
+      - FUNNEL_CA_PATH=/run/funnelcloud/ca.crt
+      # Gossip seed for cross-subnet agent discovery
+      - FunnelCloud__GossipSeedHost=192.168.10.166
+      # Skills paths (mounted volume)
+      - Skills__Paths__0=/skills
+    volumes:
+      - ./skills:/skills:ro
+      - ./secrets/funnelcloud:/run/funnelcloud:ro
+    depends_on:
+      memory_api:
+        condition: service_started
+    # No local ollama dependency - uses remote Blackwell via OLLAMA_REMOTE_URL
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8004/health",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # -------------------------------------------------
+  # Open-WebUI
+  # Chat + RAG UI. Talks to llama-server via its OpenAI-compatible endpoint.
+  # RAG embeddings now come from Open-WebUI's bundled sentence-transformers
+  # (local, CPU) since llama-server only serves the 32B chat model and bge-large
+  # isn't loaded. Re-enable the Ollama service above + flip these envs back to
+  # ollama if you want the old Ollama-embedded RAG path.
+  # -------------------------------------------------
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    environment:
+      - USER_AGENT=WesterfieldCloud-OpenWebUI/1.0
+      - GLOBAL_LOG_LEVEL=DEBUG
+      - DEFAULT_MODELS=${LLM_MODEL:-bonsai-2-27b}
+      # Primary inference via llama-server (OpenAI-compatible).
+      - ENABLE_OPENAI_API=true
+      - OPENAI_API_BASE_URL=${LLM_BASE_URL:-http://172.17.0.1:8081}/v1
+      - OPENAI_API_KEY=sk-local-llamacpp
+      # Ollama connector disabled by default; re-enable if you run Ollama.
+      - ENABLE_OLLAMA_API=false
+      # RAG: use Open-WebUI's built-in sentence-transformers (local, CPU).
+      - RAG_EMBEDDING_ENGINE=
+      - ENABLE_API_KEY=true
+      - MEMORY_ENABLED=true
+      - MEMORY_SHORT_TERM_MEMORY_DEPTH=15
+      - TOOLS_FUNCTION_CALLING_ENABLED=true
+      - MEMORY_API_URL=http://172.17.0.1:8000
+      - TOOLS_DISCOVERY_URL=http://172.17.0.1:8000/api/tools
+      # Orchestrator for AJ filter task execution (dockerized orchestrator_api
+      # on the host network; 172.17.0.1 = docker0 host IP reachable from bridges).
+      # For VS debugging on Windows, override with http://172.25.224.1:<VS port>.
+      - ORCHESTRATOR_API_URL=${ORCHESTRATOR_API_URL:-http://172.17.0.1:8004}
+      # Extractor for AJ filter media extraction
+      - EXTRACTOR_API_URL=http://172.17.0.1:8002
+      # FunnelCloud tray app for event notifications (Windows host IP from WSL2)
+      - TRAY_EVENT_URL=${TRAY_EVENT_URL:-http://172.25.224.1:6666}
+    ports:
+      - "8180:8080" # Host 8180 -> Container 8080 (8080 often reserved by Windows/Hyper-V)
+    volumes:
+      - /mnt/c/docker-data/open-webui/data:/app/backend/data
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8g
+    restart: unless-stopped
+    networks:
+      - webtools_network

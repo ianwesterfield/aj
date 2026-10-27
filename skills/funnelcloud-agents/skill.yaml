@@ -1,0 +1,25 @@
+name: funnelcloud-agents
+version: 1
+description: Execute commands on remote machines via FunnelCloud agents
+
+# This skill uses Tier 2 (SKILL.md) for LLM guidance only.
+# No deterministic workflow - agent selection requires reasoning.
+
+triggers:
+  patterns:
+    - "(?:run|execute|ping|check).*(?:on|from).*(?:server|workstation|agent|machine)"
+    - "(?:list|show|what).*agents?"
+    - "(?:remote|ssh|funnelcloud).*(?:execute|command|run)"
+  keywords:
+    - execute
+    - agent
+    - remote
+    - funnelcloud
+    - server
+    - workstation
+    - run command
+    - ping
+    - shell
+
+# No workflow - this skill injects context for LLM reasoning
+# The SKILL.md provides guidance on proper tool usage

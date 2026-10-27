@@ -1,0 +1,59 @@
+# FunnelCloud agent — build + deploy to one Linux client over SSH.
+# One pipeline definition per machine: set AGENT_HOST and AGENT_ID as definition variables.
+# Auth = funnelcloud-deploy-ssh secure file (key) + scoped NOPASSWD sudoers on the target.
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - layers/agents/FunnelCloud/**
+
+pool:
+  name: Default
+
+variables:
+  - group: funnelcloud-deploy
+
+steps:
+  - checkout: self
+
+  - script: dotnet publish layers/agents/FunnelCloud/FunnelCloud.Agent -c Release -r linux-x64 --self-contained -o $(Build.ArtifactStagingDirectory)/publish
+    displayName: Publish agent (linux-x64)
+
+  - task: DownloadSecureFile@1
+    name: cacrt
+    inputs:
+      secureFile: funnelcloud-ca.crt
+
+  - task: DownloadSecureFile@1
+    name: cakey
+    inputs:
+      secureFile: funnelcloud-ca.key
+
+  - task: DownloadSecureFile@1
+    name: sshkey
+    inputs:
+      secureFile: funnelcloud-deploy-ssh
+
+  - pwsh: >
+      ./layers/agents/FunnelCloud/scripts/New-AgentCertFromCA.ps1
+      -AgentId '$(AGENT_ID)'
+      -CACertPath '$(cacrt.secureFilePath)'
+      -CAKeyPath '$(cakey.secureFilePath)'
+      -OutDir '$(Build.ArtifactStagingDirectory)/certs'
+      -PfxPassword '$(FUNNEL_CERT_PASSWORD)'
+    displayName: Generate agent certificate
+
+  - pwsh: >
+      ./layers/agents/FunnelCloud/scripts/Push-LinuxAgent.ps1
+      -TargetHost '$(AGENT_HOST)'
+      -AgentId '$(AGENT_ID)'
+      -SshKeyPath '$(sshkey.secureFilePath)'
+      -SourceDir '$(Build.ArtifactStagingDirectory)/publish'
+      -CertDir '$(Build.ArtifactStagingDirectory)/certs'
+    displayName: Deploy to $(AGENT_HOST)
+    env:
+      FUNNEL_CERT_PASSWORD: $(FUNNEL_CERT_PASSWORD)
+      FUNNEL_ALLOWED_CLIENT_SHA256: $(FUNNEL_ALLOWED_CLIENT_SHA256)

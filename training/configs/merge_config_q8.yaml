@@ -1,0 +1,23 @@
+# Adapter Merge Configuration for AJ - Q8_0 (High Quality)
+# ~32GB model - requires CPU offloading on 24GB VRAM cards
+# Recommended for: 48GB+ VRAM, or when quality > speed
+
+base_model: "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B"
+
+adapters:
+  # AJ v2.1.0 LoRA - mixed dataset (conversational + domain + strategic)
+  # Trained with mixed_v1_h200.yaml on H200
+  - path: "/mnt/c/Models/AJ-DeepSeekR1Qwen32B-v2.1.0/AJ-DeepSeekR1Qwen32B-v2.1.0-lora"
+    weight: 1.0
+
+# Merge strategy
+method: "linear"    # "linear" or "ties"
+# ties_density: 0.5  # Only used if method=ties
+offload_buffers: true
+
+# Output
+output: "./output/deepseek-r1-distill-qwen-32b-aj-Q8_0"
+
+# Post-merge conversion
+convert_to_gguf: true
+gguf_quantization: "Q8_0"

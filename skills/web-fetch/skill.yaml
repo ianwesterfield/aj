@@ -1,0 +1,31 @@
+name: web-fetch
+version: 1
+description: "Fetch and read content from a URL. Use when user shares a link or asks about a website."
+
+triggers:
+  # Patterns kept for reference but LLM decides when to use this skill
+  patterns: []
+  keywords: []
+
+parameters:
+  url:
+    pattern: "(https?://[^\\s\"'<>]+)"
+    required: true
+    description: "The URL to fetch"
+
+target:
+  agent: ians-r16
+  description: "Workstation for outbound HTTP requests"
+
+workflow:
+  steps:
+    - name: "Fetch and parse webpage"
+      timeoutSeconds: 30
+      commands:
+        windows: "$r = Invoke-WebRequest -Uri '{{url}}' -UseBasicParsing -TimeoutSec 30; $html = $r.Content; if ($html -match '(?is)<body[^>]*>(.*?)</body>') { $b = $Matches[1] } else { $b = $html }; $t = $b -replace '(?is)<script[^>]*>.*?</script>','' -replace '(?is)<style[^>]*>.*?</style>','' -replace '(?is)<noscript[^>]*>.*?</noscript>','' -replace '<[^>]+>',' ' -replace '&nbsp;',' ' -replace '&amp;','&' -replace '&lt;','<' -replace '&gt;','>' -replace '&#39;','''' -replace '&quot;','\"' -replace '\\s+',' '; $t = $t.Trim(); $t.Substring(0, [Math]::Min(32000, $t.Length))"
+        linux: "curl -sL --max-time 30 '{{url}}' | tr '\\n' ' ' | grep -oiP '<body[^>]*>.*?</body>' | sed 's/<script[^>]*>.*<\\/script>//gi; s/<style[^>]*>.*<\\/style>//gi; s/<noscript[^>]*>.*<\\/noscript>//gi; s/<[^>]*>//g; s/&nbsp;/ /g; s/&amp;/\\&/g; s/&lt;/</g; s/&gt;/>/g; s/&#39;/'\"'\"'/g; s/&quot;/\"/g' | tr -s ' ' | head -c 32000"
+        macos: "curl -sL --max-time 30 '{{url}}' | tr '\\n' ' ' | grep -oiE '<body[^>]*>.*</body>' | sed -E 's/<script[^>]*>[^<]*<\\/script>//gi; s/<style[^>]*>[^<]*<\\/style>//gi; s/<noscript[^>]*>[^<]*<\\/noscript>//gi; s/<[^>]*>//g; s/&nbsp;/ /g; s/&amp;/\\&/g; s/&lt;/</g; s/&gt;/>/g; s/&#39;/'\"'\"'/g; s/&quot;/\"/g' | tr -s ' ' | head -c 32000"
+
+responses:
+  success: "Here's the content from {{url}}:\n\n{{output}}"
+  failure: "Failed to fetch {{url}}: {{error}}"

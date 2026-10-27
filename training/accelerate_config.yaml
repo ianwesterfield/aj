@@ -1,0 +1,21 @@
+# Accelerate configuration for Multi-GPU DDP training
+# 
+# Usage:
+#   accelerate launch --config_file accelerate_config.yaml scripts/train_mixed_h200.py --config configs/mixed_v1_2xh200.yaml
+#
+# Adjust num_processes to match your GPU count.
+
+compute_environment: LOCAL_MACHINE
+distributed_type: MULTI_GPU
+downcast_bf16: 'no'
+machine_rank: 0
+main_training_function: main
+mixed_precision: bf16
+num_machines: 1
+num_processes: 2  # Number of GPUs - adjust as needed
+rdzv_backend: static
+same_network: true
+tpu_env: []
+tpu_use_cluster: false
+tpu_use_sudo: false
+use_cpu: false

@@ -1,0 +1,23 @@
+
+# Extractor Service - Media to Text Conversion
+# Supports: Text, Markdown, Images (via llama-server VLM), Audio (faster-whisper), PDF
+
+# Core FastAPI
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.26
+
+# Vision: remote llama-server (Bonsai mmproj) via OpenAI-compatible API
+httpx>=0.27.0
+
+# Audio transcription (CTranslate2 backend, GPU or CPU)
+faster-whisper>=1.1.0
+# CUDA runtime libs for CTranslate2 GPU inference (slim alternative to full torch)
+nvidia-cublas-cu12>=12.4
+nvidia-cudnn-cu12>=9,<10
+
+# PDF processing
+pymupdf>=1.23.0
+
+# File type detection
+python-magic>=0.4.27

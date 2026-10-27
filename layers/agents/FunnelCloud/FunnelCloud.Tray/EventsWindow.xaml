@@ -1,0 +1,179 @@
+<ui:FluentWindow x:Class="FunnelCloud.Tray.EventsWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 xmlns:vm="clr-namespace:FunnelCloud.Tray.ViewModels"
+                 xmlns:conv="clr-namespace:FunnelCloud.Tray.Converters"
+                 Title="FunnelCloud - Events"
+                 Width="420"
+                 Height="380"
+                 ResizeMode="NoResize"
+                 Topmost="True"
+                 ShowInTaskbar="False"
+                 WindowBackdropType="Mica"
+                 ExtendsContentIntoTitleBar="True">
+
+  <ui:FluentWindow.Resources>
+    <conv:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
+    <conv:ExpandedToChevronConverter x:Key="ExpandedToChevronConverter"/>
+  </ui:FluentWindow.Resources>
+
+  <Grid Margin="16">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <!-- Header -->
+    <Grid Grid.Row="0"
+          Margin="0,0,0,16">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition Width="Auto"/>
+      </Grid.ColumnDefinitions>
+
+      <ui:SymbolIcon Symbol="Alert24"
+                     FontSize="24"
+                     Margin="0,0,12,0"/>
+
+      <TextBlock Grid.Column="1"
+                 Text="FunnelCloud"
+                 FontSize="16"
+                 FontWeight="SemiBold"
+                 VerticalAlignment="Center"/>
+
+      <StackPanel Grid.Column="2"
+                  Orientation="Horizontal"
+                  VerticalAlignment="Center">
+        <Ellipse Width="8"
+                 Height="8"
+                 Fill="{Binding StatusColor}"
+                 Margin="0,0,8,0"/>
+        <TextBlock Text="{Binding StatusText}"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   FontSize="12"/>
+      </StackPanel>
+    </Grid>
+
+    <!-- Stats row -->
+    <ui:Card Grid.Row="1"
+             Margin="0,0,0,12"
+             Padding="12,8">
+      <StackPanel Orientation="Horizontal">
+        <StackPanel Orientation="Horizontal">
+          <ui:SymbolIcon Symbol="Checkmark24"
+                         Foreground="#6CCB5F"
+                         FontSize="16"/>
+          <TextBlock Margin="6,0,0,0"
+                     VerticalAlignment="Center">
+            <Run Text="Completed: "
+                 Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+            <Run Text="{Binding CompletedCount}"
+                 FontWeight="SemiBold"
+                 Foreground="#6CCB5F"/>
+          </TextBlock>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal"
+                    Margin="24,0,0,0">
+          <ui:SymbolIcon Symbol="Dismiss24"
+                         Foreground="#F87171"
+                         FontSize="16"/>
+          <TextBlock Margin="6,0,0,0"
+                     VerticalAlignment="Center">
+            <Run Text="Failed: "
+                 Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+            <Run Text="{Binding FailedCount}"
+                 FontWeight="SemiBold"
+                 Foreground="#F87171"/>
+          </TextBlock>
+        </StackPanel>
+      </StackPanel>
+    </ui:Card>
+
+    <!-- Events list -->
+    <ScrollViewer Grid.Row="2"
+                  VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled">
+      <ItemsControl ItemsSource="{Binding Events}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate DataType="{x:Type vm:EventItemViewModel}">
+            <Border Margin="0,2"
+                    Padding="8,6"
+                    Background="{DynamicResource ControlFillColorDefaultBrush}"
+                    CornerRadius="4"
+                    Cursor="Hand"
+                    MouseLeftButtonUp="EventItem_MouseLeftButtonUp">
+              <StackPanel>
+                <!-- Header row -->
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                  </Grid.ColumnDefinitions>
+
+                  <!-- Status icon -->
+                  <ui:SymbolIcon Grid.Column="0"
+                                 Symbol="{Binding StatusSymbol}"
+                                 Foreground="{Binding StatusBrush}"
+                                 FontSize="16"
+                                 Margin="0,0,10,0"
+                                 VerticalAlignment="Center"/>
+
+                  <!-- Command text -->
+                  <TextBlock Grid.Column="1"
+                             Text="{Binding CommandText}"
+                             TextTrimming="CharacterEllipsis"
+                             ToolTip="{Binding FullCommand}"
+                             VerticalAlignment="Center"/>
+
+                  <!-- Time + duration -->
+                  <StackPanel Grid.Column="2"
+                              Orientation="Horizontal"
+                              VerticalAlignment="Center"
+                              Margin="8,0">
+                    <TextBlock Text="{Binding DurationText}"
+                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                               FontSize="11"
+                               Margin="0,0,8,0"/>
+                    <TextBlock Text="{Binding TimeText}"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                               FontSize="11"/>
+                  </StackPanel>
+
+                  <!-- Expand/collapse chevron -->
+                  <ui:SymbolIcon Grid.Column="3"
+                                 Symbol="{Binding IsExpanded, Converter={StaticResource ExpandedToChevronConverter}}"
+                                 FontSize="12"
+                                 Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                 Visibility="{Binding HasResult, Converter={StaticResource BoolToVisibilityConverter}}"
+                                 VerticalAlignment="Center"/>
+                </Grid>
+
+                <!-- Expandable result section -->
+                <Border Visibility="{Binding IsExpanded, Converter={StaticResource BoolToVisibilityConverter}}"
+                        Margin="26,8,0,0"
+                        Padding="8"
+                        Background="{DynamicResource ControlFillColorSecondaryBrush}"
+                        CornerRadius="4"
+                        MaxHeight="200">
+                  <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                HorizontalScrollBarVisibility="Disabled">
+                    <TextBlock Text="{Binding ResultText}"
+                               FontFamily="Cascadia Code,Consolas,Courier New"
+                               FontSize="11"
+                               TextWrapping="Wrap"
+                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"/>
+                  </ScrollViewer>
+                </Border>
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+  </Grid>
+</ui:FluentWindow>

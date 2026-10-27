@@ -1,0 +1,401 @@
+"""
+Pragmatics Service - Intent Classification & Entity Extraction for AJ
+
+Multi-class intent classification for conversation routing.
+Named entity recognition for extracting user info.
+LLM-based memory summarization for what's worth remembering.
+
+Endpoints:
+  POST /api/pragmatics/classify - Full 4-class classification (recommended)
+  POST /api/pragmatics/entities - Named entity extraction (names, orgs, dates, emails)
+  POST /api/pragmatics/extract-facts-storage - Memory summarization (what to remember)
+  POST /api/pragmatic - Binary save detection (backward compatible)
+
+Models:
+  - Intent: DistilBERT fine-tuned on conversation intents (4-class: casual/save/recall/task)
+  - NER: spaCy en_core_web_sm for entity extraction
+  - Memory: Main Ollama model for summarizing what to remember
+"""
+
+import logging
+import time
+from typing import Dict, Any, Optional, List
+
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+from services.classifier import (
+    classify_intent,
+    classify_intent_multiclass,
+    classify_with_context,
+)
+from services.entity_extractor import extract_entities_dict, extract_user_info
+from services.fact_extractor import (
+    facts_to_storage_format,
+    summarize_for_memory,
+)
+
+
+# ============================================================================
+# Application Setup
+# ============================================================================
+
+app = FastAPI(
+    title="Pragmatics Service",
+    description="Multi-class intent classification for AJ (casual/save/recall/task)",
+    version="2.2.0",
+)
+
+
+# ============================================================================
+# Logging
+# ============================================================================
+
+logger = logging.getLogger("pragmatics.api")
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] %(name)s - %(levelname)s - %(message)s",
+)
+
+
+# ============================================================================
+# Schemas
+# ============================================================================
+
+
+class ClassifyRequest(BaseModel):
+    """Request to classify user text intent."""
+
+    text: str = Field(..., min_length=1, max_length=5000)
+
+
+class ClassifyResponse(BaseModel):
+    """Binary classification result (backward compatible)."""
+
+    is_save_request: bool
+    confidence: float
+
+
+class IntentResponse(BaseModel):
+    """Full 4-class intent classification result."""
+
+    intent: str = Field(..., description="One of: casual, save, recall, task")
+    confidence: float = Field(..., description="Confidence score 0-1")
+    all_probs: Optional[Dict[str, float]] = Field(
+        None, description="All class probabilities"
+    )
+
+
+# ============================================================================
+# Endpoints
+# ============================================================================
+
+
+@app.post("/api/pragmatics/classify", response_model=IntentResponse)
+async def classify_multiclass(request: ClassifyRequest) -> IntentResponse:
+    """
+    Classify user intent into one of 4 categories.
+
+    Categories:
+      - casual: Greetings, general chat, questions
+      - save: User providing info to remember ("My name is Ian")
+      - recall: User asking for stored info ("What's my name?")
+      - task: Workspace/code/execution requests ("List files")
+
+    Returns the most likely intent and confidence score.
+    """
+    start_time = time.time()
+    text_preview = request.text[:100] if len(request.text) > 100 else request.text
+
+    try:
+        result = classify_intent_multiclass(request.text)
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        logger.info(
+            f"[classify] intent={result['intent']} conf={result['confidence']:.2f} "
+            f"ms={duration_ms} text='{text_preview}'"
+        )
+
+        return IntentResponse(
+            intent=result["intent"],
+            confidence=round(result["confidence"], 4),
+            all_probs={k: round(v, 4) for k, v in result["all_probs"].items()},
+        )
+
+    except Exception as exc:
+        logger.error(f"[classify] Error: {exc} | text: {text_preview}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/pragmatic", response_model=ClassifyResponse)
+async def classify_binary(request: ClassifyRequest) -> ClassifyResponse:
+    """
+    Binary classification: is this a save request?
+
+    Backward compatible endpoint for existing integrations.
+    For new code, use /api/pragmatics/classify instead.
+    """
+    start_time = time.time()
+    text_preview = request.text[:100] if len(request.text) > 100 else request.text
+
+    try:
+        is_save, confidence = classify_intent(request.text)
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        logger.info(
+            f"[classify-binary] save={is_save} conf={confidence:.2f} "
+            f"ms={duration_ms}"
+        )
+
+        return ClassifyResponse(
+            is_save_request=is_save,
+            confidence=round(confidence, 4),
+        )
+
+    except Exception as exc:
+        logger.error(f"[classify-binary] Error: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+class ContextClassifyRequest(BaseModel):
+    """Request to classify user text with conversation context."""
+
+    text: str = Field(..., min_length=1, max_length=5000)
+    context: str = Field(
+        "",
+        max_length=2000,
+        description="Recent conversation context (e.g., last assistant message)",
+    )
+
+
+@app.post("/api/pragmatics/classify-with-context", response_model=IntentResponse)
+async def classify_with_conversation_context(
+    request: ContextClassifyRequest,
+) -> IntentResponse:
+    """
+    Classify user intent with conversation context.
+
+    This endpoint helps disambiguate short follow-up responses like:
+    - "yes" / "ok" / "go ahead" (affirmative continuations)
+    - "do it" / "make that change" (action confirmations)
+    - "can you change that?" (follow-up action requests)
+
+    By providing the last assistant message as context, the classifier
+    can better determine if these are task continuations.
+
+    Args:
+        text: Current user message
+        context: Recent assistant message (what the user is responding to)
+
+    Returns the most likely intent and confidence score.
+    """
+    start_time = time.time()
+    text_preview = request.text[:50] if len(request.text) > 50 else request.text
+
+    try:
+        result = classify_with_context(request.text, request.context)
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        logger.info(
+            f"[classify-ctx] intent={result['intent']} conf={result['confidence']:.2f} "
+            f"ms={duration_ms} text='{text_preview}'"
+        )
+
+        return IntentResponse(
+            intent=result["intent"],
+            confidence=round(result["confidence"], 4),
+            all_probs={k: round(v, 4) for k, v in result["all_probs"].items()},
+        )
+
+    except Exception as exc:
+        logger.error(f"[classify-ctx] Error: {exc} | text: {text_preview}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ============================================================================
+# Entity Extraction Endpoints
+# ============================================================================
+
+
+class EntitiesRequest(BaseModel):
+    """Request to extract entities from text."""
+
+    text: str = Field(..., min_length=1, max_length=10000)
+
+
+class EntitiesResponse(BaseModel):
+    """Extracted named entities."""
+
+    names: List[str] = Field(default_factory=list, description="Person names")
+    organizations: List[str] = Field(
+        default_factory=list, description="Organization names"
+    )
+    dates: List[str] = Field(default_factory=list, description="Date expressions")
+    emails: List[str] = Field(default_factory=list, description="Email addresses")
+    locations: List[str] = Field(
+        default_factory=list, description="Places, cities, countries"
+    )
+    money: List[str] = Field(default_factory=list, description="Monetary values")
+    times: List[str] = Field(default_factory=list, description="Time expressions")
+
+
+class UserInfoResponse(BaseModel):
+    """User-specific info extracted from text."""
+
+    name: Optional[str] = Field(None, description="First person name found")
+    email: Optional[str] = Field(None, description="First email found")
+    organization: Optional[str] = Field(None, description="First organization found")
+
+
+@app.post("/api/pragmatics/entities", response_model=EntitiesResponse)
+async def extract_entities_endpoint(request: EntitiesRequest) -> EntitiesResponse:
+    """
+    Extract named entities from text using spaCy NER.
+
+    Returns categorized lists of:
+      - names: Person names (John Doe, Dr. Smith)
+      - organizations: Companies, institutions
+      - dates: Date expressions (tomorrow, Jan 1st, 2024)
+      - emails: Email addresses
+      - locations: Cities, countries, places
+      - money: Monetary values ($100, 50 euros)
+      - times: Time expressions (3pm, noon)
+    """
+    start_time = time.time()
+    text_preview = request.text[:100] if len(request.text) > 100 else request.text
+
+    try:
+        entities = extract_entities_dict(request.text)
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        entity_counts = {k: len(v) for k, v in entities.items() if v}
+        logger.info(
+            f"[entities] ms={duration_ms} found={entity_counts} text='{text_preview}'"
+        )
+
+        return EntitiesResponse(**entities)
+
+    except Exception as exc:
+        logger.error(f"[entities] Error: {exc} | text: {text_preview}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/pragmatics/user-info", response_model=UserInfoResponse)
+async def extract_user_info_endpoint(request: EntitiesRequest) -> UserInfoResponse:
+    """
+    Extract user-specific info from text.
+
+    Convenience endpoint that returns the first name/email/org found.
+    Useful for populating user profile or session state.
+
+    Example: "My name is John Doe and I work at Acme Corp"
+    → {"name": "John Doe", "email": null, "organization": "Acme Corp"}
+    """
+    start_time = time.time()
+    text_preview = request.text[:100] if len(request.text) > 100 else request.text
+
+    try:
+        user_info = extract_user_info(request.text)
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        logger.info(
+            f"[user-info] ms={duration_ms} info={user_info} text='{text_preview}'"
+        )
+
+        return UserInfoResponse(**user_info)
+
+    except Exception as exc:
+        logger.error(f"[user-info] Error: {exc} | text: {text_preview}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ============================================================================
+# LLM-based Fact Extraction
+# ============================================================================
+
+
+class FactsRequest(BaseModel):
+    """Request for fact extraction."""
+
+    text: str = Field(..., min_length=1, max_length=5000)
+
+
+class TerminologyItem(BaseModel):
+    """A terminology definition."""
+
+    alias: str
+    means: str
+
+
+class RelationshipItem(BaseModel):
+    """A relationship mention."""
+
+    relation: str
+    name: str
+
+
+class FactsResponse(BaseModel):
+    """Extracted facts from text."""
+
+    terminology: List[TerminologyItem] = Field(default_factory=list)
+    preferred_name: Optional[str] = None
+    preferences: List[str] = Field(default_factory=list)
+    relationships: List[RelationshipItem] = Field(default_factory=list)
+
+
+class StorageFactsResponse(BaseModel):
+    """Facts formatted for storage."""
+
+    facts: List[Dict[str, str]] = Field(default_factory=list)
+
+
+@app.post("/api/pragmatics/extract-facts", response_model=FactsResponse, deprecated=True)
+async def extract_facts_endpoint(request: FactsRequest) -> FactsResponse:
+    """
+    [DEPRECATED] Extract structured facts from text.
+    
+    This endpoint is deprecated. Use /api/pragmatics/extract-facts-storage instead,
+    which uses natural language summarization instead of structured fact extraction.
+    
+    Always returns empty results - use the -storage endpoint.
+    """
+    logger.warning(
+        "[extract-facts] DEPRECATED: Use /api/pragmatics/extract-facts-storage instead"
+    )
+    return FactsResponse(
+        terminology=[],
+        preferred_name=None,
+        preferences=[],
+        relationships=[]
+    )
+
+
+@app.post("/api/pragmatics/extract-facts-storage", response_model=StorageFactsResponse)
+async def extract_facts_for_storage(request: FactsRequest) -> StorageFactsResponse:
+    """
+    Summarize what's worth remembering and format for storage.
+
+    Returns facts as list of {type, value} dicts ready for Qdrant storage.
+
+    Example: "My wife Sarah loves hiking and we live in Seattle"
+    → {"facts": [{"type": "memory", "value": "User has wife named Sarah who loves hiking. They both Live in Seattle."}]}
+
+    If nothing worth remembering: {"facts": []}
+    """
+    start_time = time.time()
+    text_preview = request.text[:100] if len(request.text) > 100 else request.text
+
+    try:
+        result = await summarize_for_memory(request.text)
+        storage_facts = facts_to_storage_format(result)
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        logger.info(
+            f"[memory-summarize] ms={duration_ms} count={len(storage_facts)} text='{text_preview}'"
+        )
+
+        return StorageFactsResponse(facts=storage_facts)
+
+    except Exception as exc:
+        logger.error(f"[memory-summarize] Error: {exc} | text: {text_preview}")
+        raise HTTPException(status_code=500, detail=str(exc))

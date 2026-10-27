@@ -1,0 +1,51 @@
+# Mixed v1 Training Configuration for 2x H200 GPUs (DDP)
+#
+# Launch with:
+#   accelerate launch --config_file accelerate_config.yaml scripts/train_mixed_h200.py --config configs/mixed_v1_2xh200.yaml
+#
+# Expected training time: ~35 hours for 2 epochs (25K steps)
+# GPU Memory: ~88GB per GPU (61% of 143GB)
+# Effective batch size: 2 GPUs × 2 batch × 4 accumulation = 16
+
+# Model
+model_name: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+
+# Dataset
+dataset_path: ./datasets/processed/mixed_v1_final.jsonl
+
+# Output
+output_dir: ./AJ-DeepSeekR1Qwen32B-v2.1.0-lora
+
+# LoRA Configuration
+# Results in ~536M trainable params (1.61% of 32.76B)
+lora_r: 64
+lora_alpha: 128
+lora_dropout: 0.05
+
+# Training Parameters - Adjusted for 2 GPUs
+# Per-GPU batch size (each GPU processes 2 samples)
+batch_size: 2
+# Accumulation steps (lower than single-GPU since we have 2 GPUs)
+gradient_accumulation_steps: 4
+# Effective batch = 2 GPUs × 2 batch × 4 accumulation = 16
+
+# Duration
+# 2 epochs for production-grade context switching (~95-98% reliability)
+num_train_epochs: 2
+max_seq_length: 2048
+
+# Optimizer
+learning_rate: 2e-5
+weight_decay: 0.01
+warmup_steps: 100
+lr_scheduler_type: cosine
+
+# Precision
+bf16: true
+tf32: true
+gradient_checkpointing: true
+
+# Logging
+logging_steps: 10
+save_steps: 500
+eval_steps: 500

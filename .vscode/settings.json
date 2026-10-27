@@ -1,0 +1,10 @@
+{
+  "python.testing.pytestArgs": [
+    "."
+  ],
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true,
+  "diffEditor.wordWrap": "off",
+  "workbench.editor.wrapTabs": false,
+  "dotnet.defaultSolution": "AJ.All.sln"
+}

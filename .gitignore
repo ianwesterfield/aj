@@ -1,0 +1,38 @@
+bin
+obj
+.vs
+
+# secrets & private keys - never commit
+secrets/
+layers/agents/FunnelCloud/certs/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+
+# training datasets
+/training/data/
+/training/datasets/raw/
+/training/datasets/processed/
+*.jsonl
+*.parquet
+*.arrow
+
+# build/publish output
+publish*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.zip
+*.bin
+*.log
+.coverage
+
+# ML models & training output
+*.safetensors
+optimizer.pt
+checkpoint-*/
+layers/pragmatics/static/*_output/

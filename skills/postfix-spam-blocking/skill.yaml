@@ -1,0 +1,42 @@
+name: postfix-spam-blocking
+version: 1
+
+triggers:
+  patterns:
+    - "block.*(?:domain|spam)"
+    - "add.*spam.*list"
+    - "postfix.*(?:block|reject)"
+    - "reject.*(?:domain|sender)"
+    - "spam.*(?:list|block)"
+  keywords:
+    - spam
+    - block
+    - postfix
+    - mail
+    - reject
+    - sender
+
+parameters:
+  domain:
+    pattern: "[`'\"]?([a-z0-9][a-z0-9.-]*\\.[a-z]{2,})[`'\"]?"
+    required: true
+    description: "Domain to block"
+
+target:
+  agent: postfix01
+  platform: linux
+  description: "Mail server running postfix"
+
+workflow:
+  steps:
+    - name: "Add to block list"
+      command: "echo '{{domain}}              REJECT Spam domain blocked' | sudo tee -a /etc/postfix/sender_access"
+    - name: "Rebuild hash database"
+      command: "sudo postmap /etc/postfix/sender_access"
+    - name: "Reload postfix"
+      command: "sudo systemctl reload postfix"
+
+responses:
+  success: "Done! Added {{domain}} to the postfix spam block list and reloaded postfix."
+  partial: "Added {{domain}} but reload failed: {{error}}"
+  failure: "Failed to block {{domain}}: {{error}}"

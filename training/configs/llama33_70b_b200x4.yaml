@@ -1,0 +1,86 @@
+# Llama-3.3-70B-Instruct LoRA training on 4x NVIDIA B200 (191.5 GB each, 766 GB total)
+# AJ-Llama33-70B-v3.0.0-lora
+#
+# Mode: bf16 no-quant + DDP via `accelerate launch` across all 4 GPUs.
+# Each rank holds a full bf16 replica of Llama-3.3-70B (~140 GB) + LoRA + activations.
+# With 191 GB per GPU, bf16 full weights fit easily and we skip bitsandbytes entirely.
+#
+# VRAM budget per GPU (bf16, LoRA, 8k ctx, bs=1):
+#   Weights bf16:                          ~140 GB
+#   LoRA (r=64) + gradients:               ~3 GB
+#   Adam optimizer states (LoRA only):     ~3 GB
+#   Activations @ bs=1, 8192 ctx + ckpt:   ~12-18 GB
+#   Total budget:                          ~158-164 GB (headroom on 178 GB actual per B200)
+#
+# NOTE: vast.ai "B200" shows 178 GB per GPU, not the full 192 GB sales-sheet number.
+#       A prior run with bs=2 + 10240 ctx OOM'd at step 14 (rank 1 tried to alloc 3.94 GiB
+#       with 3.14 GiB free). Dropped to bs=1 + 8192 ctx + ga=4 to recover headroom while
+#       keeping effective batch the same.
+#
+# Effective batch = per_device_bs * num_gpus * grad_accum = 1 * 4 * 4 = 16
+# (same effective batch as the single-GPU Blackwell config, but wall-clock ~10-15x faster
+#  thanks to 4x parallelism + full bf16 compute + no bnb dequant overhead)
+
+# Model
+model_name: "meta-llama/Llama-3.3-70B-Instruct"
+output_dir: "./AJ-Llama33-70B-v3.0.0-lora"
+
+# Dataset (same as Blackwell config; built by prepare_mixed_v1.py)
+train_file: "datasets/processed/mixed_v1.train.jsonl"
+eval_file: "datasets/processed/mixed_v1.eval.jsonl"
+
+# Quantization: disabled on B200x4 (we have plenty of VRAM for full bf16)
+load_in_8bit: false
+load_in_4bit: false
+torch_dtype: "bfloat16"
+
+# LoRA (same shape as Blackwell config — model arch unchanged)
+lora_r: 64
+lora_alpha: 128
+lora_dropout: 0.05
+target_modules:
+  - "q_proj"
+  - "k_proj"
+  - "v_proj"
+  - "o_proj"
+  - "gate_proj"
+  - "up_proj"
+  - "down_proj"
+
+# Batch sizes: per-device=1 * 4 GPUs * grad_accum=4 = effective 16
+batch_size: 1
+gradient_accumulation_steps: 4
+
+# Training duration
+num_epochs: 2
+max_steps: -1
+
+# Optimizer — standard AdamW in bf16 (no paged_adamw_8bit, we have the VRAM)
+learning_rate: 1.0e-4
+weight_decay: 0.0
+warmup_ratio: 0.03
+lr_scheduler_type: "cosine"
+optim: "adamw_torch"
+
+# Memory
+gradient_checkpointing: true
+
+# Sequence length
+max_seq_length: 8192
+
+# Logging & checkpoints
+logging_steps: 10
+save_steps: 500
+eval_steps: 500
+
+# Chat template (applied in train_llama33_70b.py via tokenizer.apply_chat_template)
+chat_template: "llama3"
+
+# Versioning
+version: "v3.0.0-lora"
+dataset_version: "mixed_v1"
+base_model_code: "Llama33-70B"
+
+# Notes:
+#   - With 4x B200 DDP at eff_bs=16 and 279k train examples, expect ~17,465 steps/epoch.
+#   - Target wall-clock: ~2-3 days for 2 epochs at ~5-8 s/step.

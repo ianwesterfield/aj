@@ -1,0 +1,12 @@
+# GitHub mirroring is disabled until a safe publishing process is configured.
+trigger: none
+
+pool:
+  name: Default
+
+steps:
+  - checkout: self
+    fetchDepth: "0"
+
+  - pwsh: Write-Host 'GitHub mirroring is disabled.'
+    displayName: GitHub mirror disabled
